@@ -59,7 +59,7 @@ def should_ignore_site(url_raw: str) -> bool:
     if netloc in BANNED_URLS:
         return True
 
-    if netloc.endswith(".gov") or netloc.endswith("sourceforge.net"):
+    if netloc.endswith(".gov") or netloc.endswith(".gov.au") or netloc.endswith("sourceforge.net"):
         return True
 
     for r in BANNED_REGEXES:
