@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import gzip
 import hashlib
 import io
@@ -11,12 +12,13 @@ from urllib.parse import unquote, urlparse
 import rarfile
 import requests
 from pathvalidate import sanitize_filepath
-from tqdm import tqdm
 from warcio.archiveiterator import ArchiveIterator
 
+
 COMMON_CRAWL_S3_BASE_URL = "https://data.commoncrawl.org/"
-CUSTOM_USER_AGENT = "Mozilla/5.0 (compatible; CustomDownloader/0.1; +https://github.com/heinermann)"
+CUSTOM_USER_AGENT = "Mozilla/5.0 (compatible; CustomDownloader/0.1; +https://github.com/heinermann/crawler_scanner)"
 TARGET_EXTENSIONS = [".pud", ".rep", ".scm", ".scx"]
+# Map size lowerbound: 240 bytes
 
 
 class ZIPHAS:
@@ -26,16 +28,17 @@ class ZIPHAS:
     FAILED_INSPECTION = 3
 
 
-def is_archive_matching(archive_file):
+def is_archive_matching(archive_file) -> int:
     """Checks if the archive contains a file which matches one of the target extensions"""
     for member_name in archive_file.namelist():
         ext_lower = os.path.splitext(member_name)[1].lower()
         if ext_lower in TARGET_EXTENSIONS:
+            print("Found known extension inside archive")
             return ZIPHAS.MATCH
     return ZIPHAS.NO_MATCH
 
 
-def check_zip_archive(archive_stream, original_url_for_log):
+def check_zip_archive(archive_stream, original_url_for_log) -> int:
     """Checks a zip archive for contained files"""
     try:
         with zipfile.ZipFile(archive_stream, 'r') as archive_file:
@@ -47,7 +50,7 @@ def check_zip_archive(archive_stream, original_url_for_log):
     return ZIPHAS.FAILED_INSPECTION
 
 
-def check_rar_archive(archive_stream, original_url_for_log):
+def check_rar_archive(archive_stream, original_url_for_log) -> int:
     """Checks a rar archive for contained files"""
     try:
         with rarfile.RarFile(archive_stream, 'r') as archive_file:
@@ -65,7 +68,7 @@ def check_rar_archive(archive_stream, original_url_for_log):
     return ZIPHAS.FAILED_INSPECTION
 
 
-def check_archive_contents(payload_bytes, archive_type, original_url_for_log):
+def check_archive_contents(payload_bytes, archive_type, original_url_for_log) -> int:
     """Checks contents of a ZIP or RAR archive. Returns 'MATCH', 'NO_MATCH', or 'FAILED_INSPECTION'."""
     archive_stream = io.BytesIO(payload_bytes)
     if archive_type == "zip":
@@ -75,18 +78,21 @@ def check_archive_contents(payload_bytes, archive_type, original_url_for_log):
     return ZIPHAS.FAILED_INSPECTION
 
 
-def is_desired_file_header(payload_bytes):
+def is_desired_file_header(payload_bytes) -> bool:
     """Checks the contents of the file header for known types."""
     if payload_bytes.startswith(b"MPQ\x1a"):
-        return True, "SCM/SCX/MPQ"
+        print("Found SCM/SCX/MPQ")
+        return True
     elif payload_bytes.startswith(b"\xa7\x7e\x7e\x2b\x01\x00\x00\x00"):
-        return True, "REP"
+        print("Found REP")
+        return True
     elif payload_bytes.startswith(b"TYPE\x10\x00\x00\x00"):
-        return True, "PUD"
-    return False, None
+        print("Found PUD/CHK")
+        return True
+    return False
 
 
-def should_save_this_record(payload_bytes, original_filename_from_url):
+def should_save_this_record(payload_bytes, original_filename_from_url) -> bool:
     """Checks if this record should be saved or not."""
     archive_inspection_actually_failed = False
 
@@ -95,23 +101,25 @@ def should_save_this_record(payload_bytes, original_filename_from_url):
     if file_ext_original == '.zip':
         archive_status = check_archive_contents(payload_bytes, "zip", original_filename_from_url)
         if archive_status == ZIPHAS.MATCH:
-            return True, "ZIP contents match criteria"
+            print("Found ZIP")
+            return True
         elif archive_status == ZIPHAS.FAILED_INSPECTION:
             archive_inspection_actually_failed = True
     elif file_ext_original == '.rar':
         archive_status = check_archive_contents(payload_bytes, "rar", original_filename_from_url)
         if archive_status == ZIPHAS.MATCH:
-            return True, "RAR contents match criteria"
+            print("Found RAR")
+            return True
         elif archive_status == ZIPHAS.FAILED_INSPECTION:
             archive_inspection_actually_failed = True
 
     if file_ext_original in TARGET_EXTENSIONS or archive_inspection_actually_failed:
         return is_desired_file_header(payload_bytes)
 
-    return False, None
+    return False
 
 
-def download_and_extract_payload(target_url, offset, length, original_filename_url, output_dir_base):
+def download_and_extract_payload(target_url: str, offset: int, length: int, original_filename_url: str, output_dir_base: str) -> None:
     """Downloads a byte range, decompresses, checks conditions, and saves if criteria are met."""
     try:
         print(f"Processing: {original_filename_url}")
@@ -134,15 +142,14 @@ def download_and_extract_payload(target_url, offset, length, original_filename_u
             if not original_filename_from_url:
                 original_filename_from_url = sanitize_filepath(parsed_original_url.netloc, "_") + "_index"
 
-            should_save = False
-            save_reason = "none"
+            should_save: bool = False
 
             # Do a quick check for known file extensions
             file_ext_original = os.path.splitext(original_filename_from_url)[1].lower()
             if file_ext_original in TARGET_EXTENSIONS:
                 # Only need 8 bytes for the check
                 payload_bytes = record.content_stream().read(length=8)
-                should_save, save_reason = is_desired_file_header(payload_bytes)
+                should_save = is_desired_file_header(payload_bytes)
 
                 # It's definitely NOT going to be valid
                 if not should_save:
@@ -153,10 +160,9 @@ def download_and_extract_payload(target_url, offset, length, original_filename_u
             elif length < 1 * 1024 * 1024:  # is a zip/rar OR a map file renamed to zip (less than 1MB)
                 # TODO do iterative check for zip and rar files too
                 payload_bytes = record.content_stream().read()
-                should_save, save_reason = should_save_this_record(payload_bytes, original_filename_from_url)
+                should_save = should_save_this_record(payload_bytes, original_filename_from_url)
 
             if should_save:
-                print(f"Condition met: {save_reason}.")
                 domain_name = sanitize_filepath(parsed_original_url.netloc, "_")
                 path_hash = hashlib.md5(original_path_for_hash.encode('utf-8', 'replace')).hexdigest()
                 sanitized_final_filename = unquote(sanitize_filepath(original_filename_from_url, "_"))
@@ -183,16 +189,16 @@ def download_and_extract_payload(target_url, offset, length, original_filename_u
     except gzip.BadGzipFile:
         print(f"Error: Downloaded content for {target_url} is not a valid GZip file. Offset/Length might be incorrect or data corrupted.")
     finally:
-        time.sleep(0.2)
+        time.sleep(0.1)
 
 
-def process_input_file(filepath, output_dir):
+def process_input_file(filepath: str, output_dir: str) -> None:
     """
     Reads the input file line by line, parses the JSON,
     and calls the download function.
     """
     with open(filepath, 'r', encoding='utf-8') as f:
-        for _, line in enumerate(f):
+        for line in f:
             data = json.loads(line)
 
             s3_path = data.get("filename")
@@ -206,7 +212,7 @@ def process_input_file(filepath, output_dir):
             offset = int(offset_str)
             length = int(length_str)
 
-            download_url = COMMON_CRAWL_S3_BASE_URL + s3_path
+            download_url: str = COMMON_CRAWL_S3_BASE_URL + s3_path
             download_and_extract_payload(download_url, offset, length, original_url_for_naming, output_dir)
 
 

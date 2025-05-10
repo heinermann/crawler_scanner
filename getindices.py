@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import gzip
 import io
 import json
@@ -28,8 +29,11 @@ BANNED_REGEXES = [re.compile(s, re.IGNORECASE) for s in [
     r".*/skins/.*",
     r".*/music/.*",
     r".*/mixtapes/.*",
+    r".*/comics/.*",
+    r".*/audio/.*",
     r".*\.wincustomize\.com/.*",
     r".*wallpaper.*",
+    r".*/temp/IndianJ\w+.*",
 ]]
 
 
@@ -47,7 +51,7 @@ class CountingReader(io.RawIOBase):
         return True
 
 
-def should_ignore_site(url_raw):
+def should_ignore_site(url_raw: str) -> bool:
     """Checks if a URL should be ignored or not."""
 
     url = urlparse(url_raw)
@@ -65,7 +69,7 @@ def should_ignore_site(url_raw):
     return False
 
 
-def read_index_line(line):
+def read_index_line(line: str) -> dict[str, str] | None:
     match = PATTERN.search(line)
     if not match:
         return None
@@ -83,7 +87,7 @@ def read_index_line(line):
     return json_stripped
 
 
-def bytes_progress_bar(total, desc, position):
+def bytes_progress_bar(total: int, desc: str, position: int) -> tqdm:
     return tqdm(total=total,
                 desc=desc,
                 position=position,
@@ -95,7 +99,7 @@ def bytes_progress_bar(total, desc, position):
                 unit_divisor=1024)
 
 
-def read_index_file(idx_line, position):
+def read_index_file(idx_line: str, position: int) -> list[dict[str, str]]:
     idx_line = idx_line.strip()
     if not idx_line:
         return []
@@ -122,7 +126,7 @@ def read_index_file(idx_line, position):
     return list(filter(None, results))  # Removes all None items
 
 
-def get_indices(input_file, output_file):
+def get_indices(input_file: str, output_file: str) -> None:
     with open(output_file, "w", encoding="utf-8") as out, open(input_file, "r", encoding="utf-8") as f:
         indices = f.readlines()
 
@@ -142,8 +146,8 @@ def get_indices(input_file, output_file):
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Retrieve the indices for a crawl (filenames and archive locations) and filters it to target specific resources.")
-    parser.add_argument("--input_file", default="cc-index.paths", help="Path to the input file (e.g., cc-index.paths)")
-    parser.add_argument("--output_file", default="2013-20.txt", help="File to print the filtered indices to")
+    parser.add_argument("input_file", required=True, default="cc-index.paths", help="Path to the input file (e.g., cc-index.paths)")
+    parser.add_argument("output_file", required=True, help="File to print the filtered indices to")
     args = parser.parse_args()
 
     get_indices(args.input_file, args.output_file)
