@@ -205,8 +205,9 @@ def process_input_file(filepath: str, output_dir: str, resume_url: str) -> None:
             original_url_for_naming = data.get("url")
 
             if resume_url and resume_url != original_url_for_naming:
-                resume_url = None
                 continue
+
+            resume_url = None
 
             if not all([s3_path, offset_str, length_str, original_url_for_naming]):
                 continue
