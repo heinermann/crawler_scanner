@@ -172,3 +172,7 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+2013-20.txt
+cc-index.paths
+output_payloads/
