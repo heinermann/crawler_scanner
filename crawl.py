@@ -109,13 +109,13 @@ def save_file(payload_bytes, parsed_original_url, record, output_dir_base):
     file_ext_original = os.path.splitext(original_filename_from_url)[1].lower()[1:]
     last_modified_date_str = record.rec_headers.get_header("WARC-Date")
 
-    domain_name = sanitize_filepath(parsed_original_url.netloc, "_")
-    sanitized_final_filename = unquote(sanitize_filepath(original_filename_from_url, "_"))
+    sanitized_final_filename = unquote(original_filename_from_url)
 
-    final_save_path = os.path.join(output_dir_base, file_ext_original, domain_name, sanitized_final_filename)
+    final_save_path = os.path.join(output_dir_base, file_ext_original, parsed_original_url.netloc, sanitized_final_filename)
     if os.path.isfile(final_save_path):
-        final_save_path = os.path.join(output_dir_base, file_ext_original, domain_name, last_modified_date_str, sanitized_final_filename)
+        final_save_path = os.path.join(output_dir_base, file_ext_original, parsed_original_url.netloc, last_modified_date_str, sanitized_final_filename)
 
+    final_save_path = sanitize_filepath(final_save_path, "_")
     os.makedirs(os.path.dirname(final_save_path), exist_ok=True)
 
     with open(final_save_path, 'wb') as f:
