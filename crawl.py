@@ -21,14 +21,7 @@ TARGET_EXTENSIONS = [".pud", ".rep", ".scm", ".scx"]
 # Map size lowerbound: 240 bytes
 
 
-class ZIPHAS:
-    """Matching states if a potential file is contained in the zip archive"""
-    MATCH = 1
-    NO_MATCH = 2
-    FAILED_INSPECTION = 3
-
-
-def is_archive_matching(archive_file) -> int:
+def is_archive_matching(archive_file) -> bool:
     """Checks if the archive contains a file which matches one of the target extensions"""
     for member_name in archive_file.namelist():
         ext_lower = os.path.splitext(member_name)[1].lower()
@@ -40,12 +33,12 @@ def is_archive_matching(archive_file) -> int:
         with archive_file.open(member_name) as f:
             data = f.read(length=8)
             if is_desired_file_header(data):
-                return ZIPHAS.MATCH
+                return True
 
-    return ZIPHAS.NO_MATCH
+    return False
 
 
-def check_zip_archive(archive_stream) -> int:
+def check_zip_archive(archive_stream) -> bool:
     """Checks a zip archive for contained files"""
     try:
         with zipfile.ZipFile(archive_stream, 'r') as archive_file:
@@ -54,10 +47,10 @@ def check_zip_archive(archive_stream) -> int:
         print("Failed to inspect ZIP archive (BadZipFile).")
     except Exception as e_archive:
         print(f"Unexpected error inspecting ZIP archive: {e_archive}")
-    return ZIPHAS.FAILED_INSPECTION
+    return False
 
 
-def check_rar_archive(archive_stream) -> int:
+def check_rar_archive(archive_stream) -> bool:
     """Checks a rar archive for contained files"""
     try:
         with rarfile.RarFile(archive_stream, 'r') as archive_file:
@@ -72,17 +65,17 @@ def check_rar_archive(archive_stream) -> int:
         print(f"Unrar tool failed (RarExecError): {e}.")
     except Exception as e_archive:
         print(f"Unexpected error inspecting RAR archive: {e_archive}")
-    return ZIPHAS.FAILED_INSPECTION
+    return False
 
 
-def check_archive_contents(payload_bytes, archive_type) -> int:
+def check_archive_contents(payload_bytes, archive_type) -> bool:
     """Checks contents of a ZIP or RAR archive. Returns 'MATCH', 'NO_MATCH', or 'FAILED_INSPECTION'."""
     archive_stream = io.BytesIO(payload_bytes)
-    if archive_type == "zip":
+    if archive_type == ".zip":
         return check_zip_archive(archive_stream)
-    elif archive_type == "rar":
+    elif archive_type == ".rar":
         return check_rar_archive(archive_stream)
-    return ZIPHAS.FAILED_INSPECTION
+    return False
 
 
 def is_desired_file_header(payload_bytes) -> bool:
@@ -105,33 +98,6 @@ def is_archive_file_header(payload_bytes) -> bool:
         return True
     elif payload_bytes.startswith(b"Rar!"):
         return True
-    return False
-
-
-def should_save_this_record(payload_bytes, original_filename_from_url) -> bool:
-    """Checks if this record should be saved or not."""
-    archive_inspection_actually_failed = False
-
-    file_ext_original = os.path.splitext(original_filename_from_url)[1].lower()
-
-    if file_ext_original == '.zip':
-        archive_status = check_archive_contents(payload_bytes, "zip")
-        if archive_status == ZIPHAS.MATCH:
-            print("Found ZIP")
-            return True
-        elif archive_status == ZIPHAS.FAILED_INSPECTION:
-            archive_inspection_actually_failed = True
-    elif file_ext_original == '.rar':
-        archive_status = check_archive_contents(payload_bytes, "rar")
-        if archive_status == ZIPHAS.MATCH:
-            print("Found RAR")
-            return True
-        elif archive_status == ZIPHAS.FAILED_INSPECTION:
-            archive_inspection_actually_failed = True
-
-    if file_ext_original in TARGET_EXTENSIONS or archive_inspection_actually_failed:
-        return is_desired_file_header(payload_bytes)
-
     return False
 
 
@@ -205,10 +171,12 @@ def download_and_extract_payload(target_url: str, offset: int, length: int, orig
                 # It's definitely NOT going to be valid if the extension is correct but header is wrong
                 if not should_save:
                     continue
-            elif length < 1 * 1024 * 1024:  # is a zip/rar OR a map file renamed to zip (less than 1MB)
+            elif length < 1 * 1024 * 1024:  # is a zip/rar
                 if is_archive_file_header(payload_bytes):
                     payload_bytes += record.content_stream().read()
-                    should_save = should_save_this_record(payload_bytes, original_filename_from_url)
+                    should_save = check_archive_contents(payload_bytes, file_ext_original)
+                    if should_save:
+                        print("Found ZIP/RAR")
 
             if should_save:
                 save_file(payload_bytes, parsed_original_url, record, output_dir_base)
