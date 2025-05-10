@@ -99,6 +99,15 @@ def is_desired_file_header(payload_bytes) -> bool:
     return False
 
 
+def is_archive_file_header(payload_bytes) -> bool:
+    """Checks the contents of the file header for archive file types."""
+    if payload_bytes.startswith(b"PK\x03\x04"):
+        return True
+    elif payload_bytes.startswith(b"Rar!"):
+        return True
+    return False
+
+
 def should_save_this_record(payload_bytes, original_filename_from_url) -> bool:
     """Checks if this record should be saved or not."""
     archive_inspection_actually_failed = False
@@ -184,21 +193,22 @@ def download_and_extract_payload(target_url: str, offset: int, length: int, orig
 
             # Do a quick check for known file extensions
             file_ext_original = os.path.splitext(original_filename_from_url)[1].lower()
-            if file_ext_original in TARGET_EXTENSIONS:
-                # Only need 8 bytes for the check
-                payload_bytes = record.content_stream().read(length=8)
-                should_save = is_desired_file_header(payload_bytes)
 
-                # It's definitely NOT going to be valid
-                if not should_save:
-                    continue
+            # Only need 8 bytes for the initial checks
+            payload_bytes = record.content_stream().read(length=8)
+            should_save = is_desired_file_header(payload_bytes)
 
+            if should_save:  # is a SCM/SCX/REP/PUD
                 # read the rest of the stream
                 payload_bytes += record.content_stream().read()
+            elif file_ext_original in TARGET_EXTENSIONS:
+                # It's definitely NOT going to be valid if the extension is correct but header is wrong
+                if not should_save:
+                    continue
             elif length < 1 * 1024 * 1024:  # is a zip/rar OR a map file renamed to zip (less than 1MB)
-                # TODO do iterative check for zip and rar files too
-                payload_bytes = record.content_stream().read()
-                should_save = should_save_this_record(payload_bytes, original_filename_from_url)
+                if is_archive_file_header(payload_bytes):
+                    payload_bytes += record.content_stream().read()
+                    should_save = should_save_this_record(payload_bytes, original_filename_from_url)
 
             if should_save:
                 save_file(payload_bytes, parsed_original_url, record, output_dir_base)
@@ -212,7 +222,7 @@ def download_and_extract_payload(target_url: str, offset: int, length: int, orig
         time.sleep(0.1)
 
 
-def process_input_file(filepath: str, output_dir: str) -> None:
+def process_input_file(filepath: str, output_dir: str, resume_url: str) -> None:
     """
     Reads the input file line by line, parses the JSON,
     and calls the download function.
@@ -225,6 +235,10 @@ def process_input_file(filepath: str, output_dir: str) -> None:
             offset_str = data.get("offset")
             length_str = data.get("length")
             original_url_for_naming = data.get("url")
+
+            if resume_url and resume_url != original_url_for_naming:
+                resume_url = None
+                continue
 
             if not all([s3_path, offset_str, length_str, original_url_for_naming]):
                 continue
@@ -241,9 +255,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Download and extract WARC payloads from a list of URLs and byte ranges based on specific criteria.")
     parser.add_argument("input_file", help="Path to the input file (e.g., 2013-20.txt)")
     parser.add_argument("--output_dir", default="output_payloads", help="Base directory to save extracted payloads (default: output_payloads)")
+    parser.add_argument("--resume_url", help="URL to resume at")
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
 
-    process_input_file(args.input_file, args.output_dir)
+    process_input_file(args.input_file, args.output_dir, args.resume_url)
     print("\nProcessing complete.")
