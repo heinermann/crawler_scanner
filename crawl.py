@@ -32,49 +32,56 @@ def is_archive_matching(archive_file) -> int:
     """Checks if the archive contains a file which matches one of the target extensions"""
     for member_name in archive_file.namelist():
         ext_lower = os.path.splitext(member_name)[1].lower()
-        if ext_lower in TARGET_EXTENSIONS:
-            print("Found known extension inside archive")
-            return ZIPHAS.MATCH
+        if ext_lower not in TARGET_EXTENSIONS:
+            continue
+
+        print("Found known extension inside archive")
+
+        with archive_file.open(member_name) as f:
+            data = f.read(length=8)
+            if is_desired_file_header(data):
+                return ZIPHAS.MATCH
+
     return ZIPHAS.NO_MATCH
 
 
-def check_zip_archive(archive_stream, original_url_for_log) -> int:
+def check_zip_archive(archive_stream) -> int:
     """Checks a zip archive for contained files"""
     try:
         with zipfile.ZipFile(archive_stream, 'r') as archive_file:
             return is_archive_matching(archive_file)
     except zipfile.BadZipFile:
-        print(f"Failed to inspect ZIP archive (BadZipFile) from {original_url_for_log}.")
+        print("Failed to inspect ZIP archive (BadZipFile).")
     except Exception as e_archive:
-        print(f"Unexpected error inspecting ZIP archive from {original_url_for_log}: {e_archive}")
+        print(f"Unexpected error inspecting ZIP archive: {e_archive}")
     return ZIPHAS.FAILED_INSPECTION
 
 
-def check_rar_archive(archive_stream, original_url_for_log) -> int:
+def check_rar_archive(archive_stream) -> int:
     """Checks a rar archive for contained files"""
     try:
         with rarfile.RarFile(archive_stream, 'r') as archive_file:
             return is_archive_matching(archive_file)
     except rarfile.BadRarFile:
-        print(f"Failed to inspect RAR archive (BadRarFile) from {original_url_for_log}.")
+        print("Failed to inspect RAR archive (BadRarFile).")
     except rarfile.NotRarFile:
-        print(f"File is not a RAR archive (NotRarFile) though identified as one: {original_url_for_log}.")
+        print("File is not a RAR archive (NotRarFile) though identified as one.")
     except rarfile.NeedFirstVolume:
-        print(f"RAR archive is multi-volume and needs first volume (NeedFirstVolume): {original_url_for_log}.")
+        print("RAR archive is multi-volume and needs first volume (NeedFirstVolume).")
     except rarfile.RarExecError as e:
-        print(f"Unrar tool failed (RarExecError) for {original_url_for_log}: {e}.")
+        print(f"Unrar tool failed (RarExecError): {e}.")
     except Exception as e_archive:
-        print(f"Unexpected error inspecting RAR archive from {original_url_for_log}: {e_archive}")
+        print(f"Unexpected error inspecting RAR archive: {e_archive}")
     return ZIPHAS.FAILED_INSPECTION
 
 
-def check_archive_contents(payload_bytes, archive_type, original_url_for_log) -> int:
+def check_archive_contents(payload_bytes, archive_type) -> int:
     """Checks contents of a ZIP or RAR archive. Returns 'MATCH', 'NO_MATCH', or 'FAILED_INSPECTION'."""
     archive_stream = io.BytesIO(payload_bytes)
     if archive_type == "zip":
-        return check_zip_archive(archive_stream, original_url_for_log)
+        return check_zip_archive(archive_stream)
     elif archive_type == "rar":
-        return check_rar_archive(archive_stream, original_url_for_log)
+        return check_rar_archive(archive_stream)
     return ZIPHAS.FAILED_INSPECTION
 
 
@@ -99,14 +106,14 @@ def should_save_this_record(payload_bytes, original_filename_from_url) -> bool:
     file_ext_original = os.path.splitext(original_filename_from_url)[1].lower()
 
     if file_ext_original == '.zip':
-        archive_status = check_archive_contents(payload_bytes, "zip", original_filename_from_url)
+        archive_status = check_archive_contents(payload_bytes, "zip")
         if archive_status == ZIPHAS.MATCH:
             print("Found ZIP")
             return True
         elif archive_status == ZIPHAS.FAILED_INSPECTION:
             archive_inspection_actually_failed = True
     elif file_ext_original == '.rar':
-        archive_status = check_archive_contents(payload_bytes, "rar", original_filename_from_url)
+        archive_status = check_archive_contents(payload_bytes, "rar")
         if archive_status == ZIPHAS.MATCH:
             print("Found RAR")
             return True
@@ -119,26 +126,57 @@ def should_save_this_record(payload_bytes, original_filename_from_url) -> bool:
     return False
 
 
+def save_file(payload_bytes, parsed_original_url, record, output_dir_base):
+    original_filename_from_url = os.path.basename(parsed_original_url.path)
+    if not original_filename_from_url:
+        original_filename_from_url = sanitize_filepath(parsed_original_url.netloc, "_") + "_index"
+
+    file_ext_original = os.path.splitext(original_filename_from_url)[1].lower()[1:]
+    last_modified_date_str = record.rec_headers.get_header("WARC-Date")
+
+    domain_name = sanitize_filepath(parsed_original_url.netloc, "_")
+    sanitized_final_filename = unquote(sanitize_filepath(original_filename_from_url, "_"))
+
+    final_save_path = os.path.join(output_dir_base, file_ext_original, domain_name, sanitized_final_filename)
+    if os.path.isfile(final_save_path):
+        final_save_path = os.path.join(output_dir_base, file_ext_original, domain_name, last_modified_date_str, sanitized_final_filename)
+
+    os.makedirs(os.path.dirname(final_save_path), exist_ok=True)
+
+    with open(final_save_path, 'wb') as f:
+        f.write(payload_bytes)
+
+    # set the last modified datetime of the file we just wrote
+    filetime = datetime.fromisoformat(last_modified_date_str).timestamp()
+    os.utime(final_save_path, (filetime, filetime))
+
+    print(f"Saved payload to: {final_save_path}")
+
+
+def request_record(target_url: str, offset: int, length: int, original_filename_url: str) -> requests.Response:
+    print(f"Processing: {original_filename_url}")
+
+    headers = {
+        'Range': f'bytes={offset}-{offset + length - 1}',
+        'User-Agent': CUSTOM_USER_AGENT
+    }
+    response = requests.get(target_url, headers=headers, timeout=(5, None), stream=True)
+    response.raise_for_status()
+    return response
+
+
 def download_and_extract_payload(target_url: str, offset: int, length: int, original_filename_url: str, output_dir_base: str) -> None:
     """Downloads a byte range, decompresses, checks conditions, and saves if criteria are met."""
     try:
-        print(f"Processing: {original_filename_url}")
-
-        headers = {
-            'Range': f'bytes={offset}-{offset + length - 1}',
-            'User-Agent': CUSTOM_USER_AGENT
-        }
-        response = requests.get(target_url, headers=headers, timeout=(5, None), stream=True)
-        response.raise_for_status()
+        response = request_record(target_url, offset, length, original_filename_url)
 
         for record in ArchiveIterator(response.raw):
             if record.rec_type != 'response' and record.rec_type != 'resource':
                 continue
 
             parsed_original_url = urlparse(original_filename_url)
-            original_path_for_hash = parsed_original_url.path + ("?" + parsed_original_url.query if parsed_original_url.query else "")
-            original_filename_from_url = os.path.basename(parsed_original_url.path)
 
+            original_filename_from_url = os.path.basename(parsed_original_url.path)
             if not original_filename_from_url:
                 original_filename_from_url = sanitize_filepath(parsed_original_url.netloc, "_") + "_index"
 
@@ -163,25 +201,7 @@ def download_and_extract_payload(target_url: str, offset: int, length: int, orig
                 should_save = should_save_this_record(payload_bytes, original_filename_from_url)
 
             if should_save:
-                domain_name = sanitize_filepath(parsed_original_url.netloc, "_")
-                path_hash = hashlib.md5(original_path_for_hash.encode('utf-8', 'replace')).hexdigest()
-                sanitized_final_filename = unquote(sanitize_filepath(original_filename_from_url, "_"))
-
-                final_save_dir = os.path.join(output_dir_base, domain_name, path_hash)
-                final_save_path = os.path.join(final_save_dir, sanitized_final_filename)
-
-                os.makedirs(final_save_dir, exist_ok=True)
-
-                with open(final_save_path, 'wb') as f:
-                    f.write(payload_bytes)
-
-                # set the last modified datetime of the file we just wrote
-                last_modified_date_str = record.rec_headers.get_header("WARC-Date")
-                last_modified_date = datetime.fromisoformat(last_modified_date_str)
-                filetime = last_modified_date.timestamp()
-                os.utime(final_save_path, (filetime, filetime))
-
-                print(f"Saved payload to: {final_save_path}")
+                save_file(payload_bytes, parsed_original_url, record, output_dir_base)
                 break
 
     except requests.exceptions.RequestException as e:
