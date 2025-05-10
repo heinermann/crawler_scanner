@@ -27,13 +27,22 @@ BANNED_REGEXES = [re.compile(s, re.IGNORECASE) for s in [
     r".*/screensavers/.*",
     r".*/pdf/.*",
     r".*/skins/.*",
+    r".*/themes/.*",
     r".*/music/.*",
     r".*/mixtapes/.*",
     r".*/comics/.*",
     r".*/audio/.*",
-    r".*\.wincustomize\.com/.*",
+    r".*/video/.*",
     r".*wallpaper.*",
     r".*/temp/IndianJ\w+.*",
+    r".*/temp/SaudiJ\w+.*",
+]]
+
+BANNED_DOMAIN_REGEXES = [re.compile(s, re.IGNORECASE) for s in [
+    r".*\.wincustomize\.com$",
+    r".*\.sourceforge\.net$",
+    r".*\.cheaters-heaven\.com$",
+    r".*\.gov(\.\w+)?$",
 ]]
 
 
@@ -59,8 +68,9 @@ def should_ignore_site(url_raw: str) -> bool:
     if netloc in BANNED_URLS:
         return True
 
-    if netloc.endswith(".gov") or netloc.endswith(".gov.au") or netloc.endswith("sourceforge.net"):
-        return True
+    for r in BANNED_DOMAIN_REGEXES:
+        if r.match(netloc):
+            return True
 
     for r in BANNED_REGEXES:
         if r.match(url_raw):
@@ -146,8 +156,8 @@ def get_indices(input_file: str, output_file: str) -> None:
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Retrieve the indices for a crawl (filenames and archive locations) and filters it to target specific resources.")
-    parser.add_argument("input_file", required=True, default="cc-index.paths", help="Path to the input file (e.g., cc-index.paths)")
-    parser.add_argument("output_file", required=True, help="File to print the filtered indices to")
+    parser.add_argument("--input_file", default="cc-index.paths", help="Path to the input file (e.g., cc-index.paths)")
+    parser.add_argument("output_file", help="File to print the filtered indices to")
     args = parser.parse_args()
 
     get_indices(args.input_file, args.output_file)

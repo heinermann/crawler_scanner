@@ -174,5 +174,7 @@ cython_debug/
 .pypirc
 
 2013-20.txt
+*.txt
 cc-index.paths
 output_payloads/
+
