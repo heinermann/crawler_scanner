@@ -3,7 +3,6 @@ import gzip
 import io
 import json
 import re
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import urlparse
 
 import requests
@@ -11,7 +10,8 @@ from tqdm import tqdm
 
 
 COMMON_CRAWL_S3_BASE_URL = "https://data.commoncrawl.org/"
-REGEX = r'\{"url":\s*"[^"]*\.(scm|scx|rep|pud|zip|rar)(\?[^"#]*|#[^"#]*)?".*\}$'
+CUSTOM_USER_AGENT = "Mozilla/5.0 (compatible; CustomDownloader/0.1; +https://github.com/heinermann/crawler_scanner)"
+REGEX = r' \{.*"url":\s*"[^"]*\.(scm|scx|rep|pud|zip|rar)(\?[^"#]*|#[^"#]*)?".*\}$'
 PATTERN = re.compile(REGEX)
 
 
@@ -84,7 +84,10 @@ def read_index_line(line: str) -> dict[str, str] | None:
     if not match:
         return None
 
-    data = json.loads(match.group(0))
+    try:
+        data = json.loads(match.group(0))
+    except Exception as e:
+        print(f"FAILED JSON READ: {e}\nContent: {line}")
 
     # We don't care about redirects and failed pages, since they won't have any usable content
     if data.get("status") != "200":
@@ -109,17 +112,23 @@ def bytes_progress_bar(total: int, desc: str, position: int) -> tqdm:
                 unit_divisor=1024)
 
 
-def read_index_file(idx_line: str, position: int) -> list[dict[str, str]]:
+def read_index_file(idx_line: str, position: int, output_file: str) -> dict[str, int]:
     idx_line = idx_line.strip()
     if not idx_line:
-        return []
+        return
 
-    r = requests.get(COMMON_CRAWL_S3_BASE_URL + idx_line, timeout=(5, None), stream=True)
+    header = {
+        "user-agent": CUSTOM_USER_AGENT
+    }
+    r = requests.get(COMMON_CRAWL_S3_BASE_URL + idx_line, headers=header, timeout=(5, None), stream=True)
     total_size = int(r.headers.get("Content-Length", 0))
 
-    results = []
+    r.iter_lines()
     counter = CountingReader(r.raw)
+
+    results = []
     last_count = 0
+
     with gzip.GzipFile(fileobj=counter) as gz, io.TextIOWrapper(gz, encoding="utf-8") as reader:
         with bytes_progress_bar(total_size, idx_line, position) as progress_bar:
             for line in reader:
@@ -130,27 +139,23 @@ def read_index_file(idx_line: str, position: int) -> list[dict[str, str]]:
                 progress_bar.update(counter.bytes_read - last_count)
                 last_count = counter.bytes_read
 
-            progress_bar.display()
-            progress_bar.close()
-
-    return list(filter(None, results))  # Removes all None items
+    with open(output_file, "a", encoding="utf-8") as out:
+        for line in results:
+            print(json.dumps(line), file=out)
 
 
 def get_indices(input_file: str, output_file: str) -> None:
-    with open(output_file, "w", encoding="utf-8") as out, open(input_file, "r", encoding="utf-8") as f:
+    # clear output
+    open(output_file, "w", encoding="utf-8").close()
+
+    indices = None
+    with open(input_file, "r", encoding="utf-8") as f:
         indices = f.readlines()
 
-        results = []
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            futures = []
-            for i, item in enumerate(indices):
-                futures.append(executor.submit(read_index_file, item, i + 1))
-
-            for future in tqdm(as_completed(futures), desc="Total", unit="", total=len(futures), position=0, leave=True):
-                results += future.result()
-
-        for item in results:
-            print(json.dumps(item), file=out)
+    with tqdm(total=len(indices), desc="Total", unit="", position=0, leave=True) as progress_bar:
+        for i, item in enumerate(indices):
+            read_index_file(item, i + 1, output_file)
+            progress_bar.update(1)
 
 
 if __name__ == "__main__":

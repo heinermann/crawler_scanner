@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 import gzip
-import hashlib
 import io
 import json
 import os
