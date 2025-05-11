@@ -16,7 +16,10 @@ from warcio.archiveiterator import ArchiveIterator
 
 COMMON_CRAWL_S3_BASE_URL = "https://data.commoncrawl.org/"
 CUSTOM_USER_AGENT = "Mozilla/5.0 (compatible; CustomDownloader/0.1; +https://github.com/heinermann/crawler_scanner)"
-TARGET_EXTENSIONS = [".pud", ".rep", ".scm", ".scx"]
+TARGET_EXTENSIONS = {".pud", ".rep", ".scm", ".scx"}
+
+# Sometimes maps can have a preview image shipped with it
+ALLOWED_EXTENSIONS = {".txt", ".nfo", ".doc", ".jpg", ".bmp", ".diz"}
 # Map size lowerbound: 240 bytes
 
 
