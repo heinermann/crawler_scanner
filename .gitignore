@@ -174,5 +174,6 @@ cython_debug/
 .pypirc
 
 *.txt
+*.jsonl
 *.paths
 output_payloads/
