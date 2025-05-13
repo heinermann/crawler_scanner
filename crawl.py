@@ -10,6 +10,7 @@ from urllib.parse import unquote, urlparse
 
 import rarfile
 import requests
+from construct import Bytes, Const, ConstError, ConstructError, Int16ul, Int32ul, Struct
 from pathvalidate import sanitize_filepath
 from warcio.archiveiterator import ArchiveIterator
 
@@ -18,9 +19,27 @@ COMMON_CRAWL_S3_BASE_URL = "https://data.commoncrawl.org/"
 CUSTOM_USER_AGENT = "Mozilla/5.0 (compatible; CustomDownloader/0.1; +https://github.com/heinermann/crawler_scanner)"
 TARGET_EXTENSIONS = {".pud", ".rep", ".scm", ".scx"}
 
-# Sometimes maps can have a preview image shipped with it
-ALLOWED_EXTENSIONS = {".txt", ".nfo", ".doc", ".jpg", ".bmp", ".diz"}
+# Sometimes maps can have a preview image or doc shipped with it
+ALLOWED_EXTENSIONS = {".txt", ".nfo", ".doc", ".jpg", ".png", ".bmp", ".diz", ".ini", ".db", ".rtf", ".trg"}
 # Map size lowerbound: 240 bytes
+
+# TODO stream-unzip? https://stream-unzip.docs.trade.gov.uk/
+
+zip_header = Struct(
+    "signature" / Const(b"PK\x03\x04"),
+    "version" / Int16ul,
+    "flags" / Int16ul,
+    "compression" / Int16ul,
+    "mod_time" / Int16ul,
+    "mod_date" / Int16ul,
+    "crc32" / Int32ul,
+    "compressed_size" / Int32ul,
+    "uncompressed_size" / Int32ul,
+    "filename_len" / Int16ul,
+    "extra_len" / Int16ul,
+    "filename" / Bytes(lambda this: this.filename_len),
+    "extra" / Bytes(lambda this: this.extra_len),
+)
 
 
 def is_archive_matching(archive_file) -> bool:
@@ -142,13 +161,65 @@ def request_record(target_url: str, offset: int, length: int, original_filename_
     return response
 
 
+def process_zip_file_preview(initial_bytes):
+    num_read = 0
+    try:
+        byte_stream = io.BytesIO(initial_bytes)
+
+        while True:
+            hdr = zip_header.parse_stream(byte_stream)
+            num_read += 1
+
+            # assuming a directory, go to the next entry
+            if hdr.compressed_size == 0:
+                continue
+
+            extension = str(os.path.splitext(hdr.filename)[1], encoding="utf-8").lower()
+
+            # Possibly a map
+            if extension in TARGET_EXTENSIONS:
+                print(f"Has target extension: {extension}")
+                return True
+
+            # definitely not a map
+            if extension not in ALLOWED_EXTENSIONS:
+                print(f"Short circuiting on extension: {extension}")
+                return False
+
+            # unknowable and not parsing other structs to find out right now
+            return True
+
+    except ConstError:
+        print("Zip header doesn't match, skipping")
+        return False
+    except ConstructError as e:
+        print(f"Zip parsing threw error after reading {num_read} entries: {type(e).__name__} {e}")
+    except Exception as e:
+        print(f"Unhandled exception in process_zip_file after reading {num_read} entries: {e}")
+
+    # Be safe and assume we just hit the end of preview with an exception
+    return True
+
+
 def download_and_extract_payload(target_url: str, offset: int, length: int, original_filename_url: str, output_dir_base: str) -> None:
     """Downloads a byte range, decompresses, checks conditions, and saves if criteria are met."""
     try:
-        response = request_record(target_url, offset, length, original_filename_url)
+        while True:
+            response = request_record(target_url, offset, length, original_filename_url)
+            if response.status_code == 206:
+                break
+
+            # rate limited
+            if response.status_code == 503:
+                time.sleep(0.4)
+                continue
+
+            print(f"Unexpected status code: {response.status_code}")
+            time.sleep(0.5)
 
         for record in ArchiveIterator(response.raw):
             if record.rec_type != 'response' and record.rec_type != 'resource':
+                time.sleep(0.2)
                 continue
 
             parsed_original_url = urlparse(original_filename_url)
@@ -163,33 +234,43 @@ def download_and_extract_payload(target_url: str, offset: int, length: int, orig
             file_ext_original = os.path.splitext(original_filename_from_url)[1].lower()
 
             # Only need 8 bytes for the initial checks
-            payload_bytes = record.content_stream().read(length=8)
-            should_save = is_desired_file_header(payload_bytes)
+            payload_bytes = record.content_stream().read(length=512)
+            time.sleep(0.1)
 
+            should_save = is_desired_file_header(payload_bytes)
             if should_save:  # is a SCM/SCX/REP/PUD
-                # read the rest of the stream
+                # read the rest of the stream and save it
                 payload_bytes += record.content_stream().read()
+                save_file(payload_bytes, parsed_original_url, record, output_dir_base)
             elif file_ext_original in TARGET_EXTENSIONS:
                 # It's definitely NOT going to be valid if the extension is correct but header is wrong
                 if not should_save:
                     continue
-            elif length < 1 * 1024 * 1024:  # is a zip/rar
-                if is_archive_file_header(payload_bytes):
+            elif not is_archive_file_header(payload_bytes):
+                # Not a valid archive header
+                continue
+            elif file_ext_original == ".zip":
+                should_save = process_zip_file_preview(payload_bytes)
+                if should_save:
                     payload_bytes += record.content_stream().read()
                     should_save = check_archive_contents(payload_bytes, file_ext_original)
                     if should_save:
-                        print("Found ZIP/RAR")
+                        print("found ZIP")
+                        save_file(payload_bytes, parsed_original_url, record, output_dir_base)
 
-            if should_save:
-                save_file(payload_bytes, parsed_original_url, record, output_dir_base)
-                break
+            elif file_ext_original == ".rar":
+                payload_bytes += record.content_stream().read()
+                should_save = check_archive_contents(payload_bytes, file_ext_original)
+                if should_save:
+                    print("found RAR")
+                    save_file(payload_bytes, parsed_original_url, record, output_dir_base)
 
     except requests.exceptions.RequestException as e:
         print(f"Error downloading {target_url}: {e}")
     except gzip.BadGzipFile:
         print(f"Error: Downloaded content for {target_url} is not a valid GZip file. Offset/Length might be incorrect or data corrupted.")
     finally:
-        time.sleep(0.1)
+        time.sleep(0.2)
 
 
 def process_input_file(filepath: str, output_dir: str, resume_url: str) -> None:
@@ -224,7 +305,7 @@ def process_input_file(filepath: str, output_dir: str, resume_url: str) -> None:
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Download and extract WARC payloads from a list of URLs and byte ranges based on specific criteria.")
-    parser.add_argument("input_file", help="Path to the input file (e.g., 2013-20.txt)")
+    parser.add_argument("input_file", help="Path to the input file (e.g., 2013-20.jsonl)")
     parser.add_argument("--output_dir", default="output_payloads", help="Base directory to save extracted payloads (default: output_payloads)")
     parser.add_argument("--resume_url", help="URL to resume at")
     args = parser.parse_args()

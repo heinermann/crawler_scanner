@@ -3,3 +3,5 @@ pathvalidate
 warcio
 requests
 tqdm
+construct
+construct-typing
