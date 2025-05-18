@@ -166,6 +166,7 @@ def read_index_file(idx_line: str, position: int, output_file: str) -> dict[str,
         "user-agent": CUSTOM_USER_AGENT
     }
     r = requests.get(COMMON_CRAWL_S3_BASE_URL + idx_line, headers=header, timeout=(5, None), stream=True)
+    r.raise_for_status()
     total_size = int(r.headers.get("Content-Length", 0))
 
     r.iter_lines()
@@ -189,9 +190,10 @@ def read_index_file(idx_line: str, position: int, output_file: str) -> dict[str,
             print(json.dumps(line), file=out)
 
 
-def get_indices(input_file: str, output_file: str) -> None:
+def get_indices(input_file: str, output_file: str, resume_url: str | None) -> None:
     # clear output
-    open(output_file, "w", encoding="utf-8").close()
+    if not resume_url:
+        open(output_file, "w", encoding="utf-8").close()
 
     indices = None
     with open(input_file, "r", encoding="utf-8") as f:
@@ -199,6 +201,12 @@ def get_indices(input_file: str, output_file: str) -> None:
 
     with tqdm(total=len(indices), desc="Total", unit="", position=0, leave=True) as progress_bar:
         for i, item in enumerate(indices):
+            item = item.strip()
+            if resume_url and resume_url != item:
+                continue
+
+            resume_url = None
+
             read_index_file(item, i + 1, output_file)
             progress_bar.update(1)
 
@@ -208,7 +216,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Retrieve the indices for a crawl (filenames and archive locations) and filters it to target specific resources.")
     parser.add_argument("--input_file", default="cc-index.paths", help="Path to the input file (e.g., cc-index.paths)")
     parser.add_argument("output_file", help="File to print the filtered indices to")
+    parser.add_argument("--resume_url", help="URL to resume at")
     args = parser.parse_args()
 
-    get_indices(args.input_file, args.output_file)
+    get_indices(args.input_file, args.output_file, args.resume_url)
     print("\nProcessing complete.")
