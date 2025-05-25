@@ -12,10 +12,9 @@ import rarfile
 import requests
 from construct import Bytes, Const, ConstError, ConstructError, Int16ul, Int32ul, Struct
 from pathvalidate import sanitize_filepath
+from requests.adapters import HTTPAdapter
+from urllib3.util import Retry
 from warcio.archiveiterator import ArchiveIterator
-
-
-# TODO AUTOMATIC RETRY
 
 
 COMMON_CRAWL_S3_BASE_URL = "https://data.commoncrawl.org/"
@@ -155,11 +154,21 @@ def save_file(payload_bytes, parsed_original_url, record, output_dir_base):
 def request_record(target_url: str, offset: int, length: int, original_filename_url: str) -> requests.Response:
     print(f"Processing: {original_filename_url}")
 
+    retry_strategy = Retry(
+        backoff_factor=2,
+        status_forcelist=[429, 500, 502, 503, 504]
+    )
+
+    adapter = HTTPAdapter(max_retries=retry_strategy)
+    session = requests.Session()
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+
     headers = {
         'Range': f'bytes={offset}-{offset + length - 1}',
         'User-Agent': CUSTOM_USER_AGENT
     }
-    response = requests.get(target_url, headers=headers, timeout=(5, None), stream=True)
+    response = session.get(target_url, headers=headers, timeout=(5, None), stream=True)
     response.raise_for_status()
     return response
 

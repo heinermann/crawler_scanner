@@ -3,92 +3,19 @@ import gzip
 import io
 import json
 import re
-from urllib.parse import urlparse
 
 import requests
+from requests.adapters import HTTPAdapter
 from tqdm import tqdm
+from urllib3.util import Retry
+
+from ignore import should_ignore_site
 
 
 COMMON_CRAWL_S3_BASE_URL = "https://data.commoncrawl.org/"
 CUSTOM_USER_AGENT = "Mozilla/5.0 (compatible; CustomDownloader/0.1; +https://github.com/heinermann/crawler_scanner)"
 REGEX = r' \{.*"url":\s*"[^"]*\.(scm|scx|rep|pud|zip|rar)(\?[^"#]*|#[^"#]*)?".*\}$'
 PATTERN = re.compile(REGEX)
-
-
-BANNED_URLS = set()
-with open("banned_urls.txt", "r", encoding="utf-8") as banned:
-    BANNED_URLS = set(line.strip() for line in banned)
-
-
-BANNED_REGEXES = [re.compile(s, re.IGNORECASE) for s in [
-    r".*_mp3\.zip$",
-    r".*/(handouts|slides).zip\".*",
-    r".*/albums?/.*",
-    r".*/audio/.*",
-    r".*/comics?/.*",
-    r".*/docs?/.*",
-    r".*/drivers?/.*",
-    r".*/dvd\b.*/.*",
-    r".*/(e|e-)?books?/.*",
-    r".*/fonts?/.*",
-    r".*/index.scm(\??.*)$",
-    r".*/lessons?/.*",
-    r".*/literature/.*",
-    r".*/magazines?/.*",
-    r".*/manuals?/.*",
-    r".*/midi/.*",
-    r".*/mixtapes/.*",
-    r".*/movies?/.*",
-    r".*/mp3s?/.*",
-    r".*/music/.*",
-    r".*/bible/.*",
-    r".*/bibliography.*",
-    r".*/patch(es)?/.*",
-    r".*/pdf/.*",
-    r".*/pdfs?/.*",
-    r".*/photos?/.*",
-    r".*/fotos?/.*",
-    r".*/lectures?/.*",
-    r".*/roms?/.*",
-    r".*/rss/.*",
-    r".*/vod/.*",
-    r".*/spellchecker/.*",
-    r".*/screensavers?/.*",
-    r".*/setup/.*",
-    r".*/skins?/.*",
-    r".*/financials?/.*",
-    r".*/songs?/.*",
-    r".*/sounds?/.*",
-    r".*/temp/IndianJ\w+.*",
-    r".*/temp/SaudiJ\w+.*",
-    r".*/themes?/.*",
-    r".*/videos?/.*",
-    r".*\bgimp/.*",
-    r".*wallpaper.*",
-    r".*\.([a-z_]{3}|x86|x64|d64|3gp|mp3|mp4|m4v|wdgt|flst|jpeg|mpeg|com_|ppsx|docx|divx|html|aiff|cpp_)\.(zip|rar)$",
-    r".*_(win|osx|mac|src|exe|cs2|png|pps|dos|doc|fsx|jpg|x64|x86|php|css|img|wmv|pdf|vbs|psd|tif|dvd|gif|xml|xls|dwg|ttf|vlm|dxf|cad|com|linux|jar|pc|dll)\.(zip|rar)$",
-]]
-
-BANNED_DOMAIN_REGEXES = [re.compile(s, re.IGNORECASE) for s in [
-    r".*\.ageofempires.*\..*",
-    r".*\.blackberry.*\..*",
-    r".*\.cheaters-heaven\.com$",
-    r".*\.font.*",
-    r".*\.gov(\.\w+)?$",
-    r".*\.nokia\.com$",
-    r".*\.codehaus\.org$",
-    r".*\.sina\.com\.cn$",
-    r"(.*\.|^)sourceforge\.net$",
-    r".*\.state\.\w\w\.us$",
-    r".*\.swipnet\.se$",
-    r".*\.wincustomize\.com$",
-    r".*\.deviantart\.net$",
-    r".*fonts?\..*",
-    r".*photoshop.*",
-    r".*subtitles?\..*",
-    r"^e?books\..*",
-    r"^mp3\..*",
-]]
 
 
 class CountingReader(io.RawIOBase):
@@ -103,25 +30,6 @@ class CountingReader(io.RawIOBase):
 
     def readable(self):
         return True
-
-
-def should_ignore_site(url_raw: str) -> bool:
-    """Checks if a URL should be ignored or not."""
-
-    url = urlparse(url_raw)
-    netloc = url.netloc.lower()
-    if netloc in BANNED_URLS:
-        return True
-
-    for r in BANNED_DOMAIN_REGEXES:
-        if r.match(netloc):
-            return True
-
-    for r in BANNED_REGEXES:
-        if r.match(url_raw):
-            return True
-
-    return False
 
 
 def read_index_line(line: str) -> dict[str, str] | None:
@@ -157,16 +65,32 @@ def bytes_progress_bar(total: int, desc: str, position: int) -> tqdm:
                 unit_divisor=1024)
 
 
+def request_indices(idx_line):
+    retry_strategy = Retry(
+        backoff_factor=2,
+        status_forcelist=[429, 500, 502, 503, 504]
+    )
+
+    adapter = HTTPAdapter(max_retries=retry_strategy)
+    session = requests.Session()
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+
+    header = {
+        "user-agent": CUSTOM_USER_AGENT
+    }
+    response = session.get(COMMON_CRAWL_S3_BASE_URL + idx_line, headers=header, timeout=(5, None), stream=True)
+    response.raise_for_status()
+
+    return response
+
+
 def read_index_file(idx_line: str, position: int, output_file: str) -> dict[str, int]:
     idx_line = idx_line.strip()
     if not idx_line:
         return
 
-    header = {
-        "user-agent": CUSTOM_USER_AGENT
-    }
-    r = requests.get(COMMON_CRAWL_S3_BASE_URL + idx_line, headers=header, timeout=(5, None), stream=True)
-    r.raise_for_status()
+    r = request_indices(idx_line)
     total_size = int(r.headers.get("Content-Length", 0))
 
     r.iter_lines()
