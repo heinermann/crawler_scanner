@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import gzip
 import io
+import os
 import json
 import re
 
@@ -65,7 +66,7 @@ def bytes_progress_bar(total: int, desc: str, position: int) -> tqdm:
                 unit_divisor=1024)
 
 
-def request_indices(idx_line):
+def http_get_streamed(url: str) -> requests.Response:
     retry_strategy = Retry(
         backoff_factor=2,
         status_forcelist=[429, 500, 502, 503, 504]
@@ -79,7 +80,7 @@ def request_indices(idx_line):
     header = {
         "user-agent": CUSTOM_USER_AGENT
     }
-    response = session.get(COMMON_CRAWL_S3_BASE_URL + idx_line, headers=header, timeout=(5, None), stream=True)
+    response = session.get(url, headers=header, timeout=(5, None), stream=True)
     response.raise_for_status()
 
     return response
@@ -90,7 +91,7 @@ def read_index_file(idx_line: str, position: int, output_file: str) -> dict[str,
     if not idx_line:
         return
 
-    r = request_indices(idx_line)
+    r = http_get_streamed(COMMON_CRAWL_S3_BASE_URL + idx_line)
     total_size = int(r.headers.get("Content-Length", 0))
 
     r.iter_lines()
@@ -135,13 +136,36 @@ def get_indices(input_file: str, output_file: str, resume_url: str | None) -> No
             progress_bar.update(1)
 
 
+def get_crawl_index_file(crawl_name: str) -> str:
+    url = f"{COMMON_CRAWL_S3_BASE_URL}crawl-data/{crawl_name}/cc-index.paths.gz"
+    index_filename = f"{crawl_name}-cc-index.paths"
+
+    # Don't redownload
+    if os.path.isfile(index_filename):
+        return index_filename
+
+    response = http_get_streamed(url)
+
+    result_list = []
+    with gzip.GzipFile(fileobj=response.raw) as gz, io.TextIOWrapper(gz, encoding="utf-8") as reader:
+        result_list = [line for line in reader if line.strip().endswith(".gz")]
+
+    if not result_list:
+        raise RuntimeError(f"Failed to obtain items from {url}")
+
+    with open(index_filename, "w", encoding="utf-8") as out:
+        out.writelines(result_list)
+
+    return index_filename
+
+
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Retrieve the indices for a crawl (filenames and archive locations) and filters it to target specific resources.")
-    parser.add_argument("--input_file", default="cc-index.paths", help="Path to the input file (e.g., cc-index.paths)")
-    parser.add_argument("output_file", help="File to print the filtered indices to")
-    parser.add_argument("--resume_url", help="URL to resume at")
+    parser.add_argument("crawl_name", help="Name of the crawl (i.e. CC-MAIN-2014-35)")
+    parser.add_argument("--resume_url", help="URL to resume at, leave blank to do full retrieval")
     args = parser.parse_args()
 
-    get_indices(args.input_file, args.output_file, args.resume_url)
+    input_index_file = get_crawl_index_file(args.crawl_name)
+    get_indices(input_index_file, f"{args.crawl_name}.jsonl", args.resume_url)
     print("\nProcessing complete.")

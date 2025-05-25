@@ -30,6 +30,7 @@ BANNED_REGEXES = [re.compile(s, re.IGNORECASE) for s in [
     r".*/movies?/.*",
     r".*/mp3s?/.*",
     r".*/music/.*",
+    r".*/sdk/.*",
     r".*/bible/.*",
     r".*/bibliography.*",
     r".*/patch(es)?/.*",
