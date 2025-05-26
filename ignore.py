@@ -47,6 +47,7 @@ BANNED_REGEXES = [re.compile(s, re.IGNORECASE) for s in [
     r".*/(utils?|utilities)/.*",
     r".*/screensavers?/.*",
     r".*/setup/.*",
+    r".*/styles?/.*",
     r".*/skins?/.*",
     r".*/financials?/.*",
     r".*/songs?/.*",
@@ -57,9 +58,10 @@ BANNED_REGEXES = [re.compile(s, re.IGNORECASE) for s in [
     r".*/videos?/.*",
     r".*\bgimp/.*",
     r".*wallpaper.*",
+    r".*winamp.*",
     r".*Encycopedia\.Britannica.*",
     r".*\.([a-z_]{3}|x86|x64|d64|3gp|mp3|mp4|m4v|wdgt|flst|jpeg|mpeg|com_|ppsx|docx|divx|html|aiff|cpp_|xvid)\.(zip|rar)$",
-    r".*[._\-+](xvid|hdtv|480p|720p|1080p|x264|dvdrip|bluray|mixtape|(%5b|%28)dis[ck]\+[123])[._\-+].*",
+    r".*[._\-+](xvid|hdtv|480p|720p|1080p|x264|dvdrip|bluray|mixtape|(%5b|%28)dis[ck]\+[1234]|cd[1234])[._\-+].*",
     r".*_(win|osx|mac|src|exe|cs2|png|pps|dos|doc|fsx|jpg|x64|x86|php|css|img|wmv|pdf|vbs|psd|tif|dvd|gif|xml|xls|dwg|ttf|vlm|dxf|cad|com|linux|jar|pc|dll)\.(zip|rar)$",
 ]]
 
