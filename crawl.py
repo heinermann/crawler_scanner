@@ -10,7 +10,7 @@ from urllib.parse import unquote, urlparse
 
 import rarfile
 import requests
-from construct import Bytes, Const, ConstError, ConstructError, Int16ul, Int32ul, Struct
+from construct import Bytes, Const, ConstError, ConstructError, Int16ul, Int32ul, Int8ul, Struct, this
 from pathvalidate import sanitize_filepath
 from requests.adapters import HTTPAdapter
 from urllib3.util import Retry
@@ -39,8 +39,25 @@ zip_header = Struct(
     "uncompressed_size" / Int32ul,
     "filename_len" / Int16ul,
     "extra_len" / Int16ul,
-    "filename" / Bytes(lambda this: this.filename_len),
-    "extra" / Bytes(lambda this: this.extra_len),
+    "filename" / Bytes(this.filename_len),
+    "extra" / Bytes(this.extra_len),
+)
+
+rar_file_header = Struct(
+    "head_crc" / Int16ul,
+    "head_type" / Int8ul,
+    "flags" / Int16ul,
+    "head_size" / Int16ul,
+    "pack_size" / Int32ul,
+    "unp_size" / Int32ul,
+    "host_os" / Int8ul,
+    "file_crc" / Int32ul,
+    "ftime" / Int32ul,
+    "unp_ver" / Int8ul,
+    "method" / Int8ul,
+    "name_size" / Int16ul,
+    "attr" / Int32ul,
+    "filename" / Bytes(this.name_size),
 )
 
 
@@ -219,6 +236,61 @@ def process_zip_file_preview(initial_bytes):
     return True
 
 
+def process_rar_file_preview(initial_bytes):
+    num_read = 0
+    try:
+        data_len = len(initial_bytes)
+        offset = 0
+
+        while offset + 32 < data_len:
+            # look for file header type 0x74 (file header)
+            head_type = initial_bytes[offset + 2]
+            if head_type != 0x74:
+                # skip to next header by reading head_size if possible
+                if offset + 5 < data_len:
+                    head_size = int.from_bytes(initial_bytes[offset + 3:offset + 5], "little")
+                    if head_size > 0:
+                        offset += head_size
+                        continue
+                offset += 1
+                continue
+
+            # parse header
+            header = rar_file_header.parse(initial_bytes[offset:])
+            num_read += 1
+
+            # decode filename
+            try:
+                extension = os.path.splitext(header.filename.decode("utf-8").lower())[1]
+            except UnicodeDecodeError:
+                extension = os.path.splitext(header.filename.decode("latin1").lower())[1]
+
+            # check extensions
+            if extension in TARGET_EXTENSIONS:
+                print(f"Has target extension: {extension}")
+                return True
+
+            if extension not in ALLOWED_EXTENSIONS:
+                print(f"Short circuiting on extension: {extension}")
+                return False
+
+            # move to next header
+            offset += header.head_size
+
+        # End of data reached safely
+        return True
+
+    except ConstError:
+        print("RAR header doesn't match, skipping")
+        return False
+    except ConstructError as e:
+        print(f"RAR parsing error after reading {num_read} entries: {type(e).__name__} {e}")
+    except Exception as e:
+        print(f"Unhandled exception in process_rar_file_preview after reading {num_read} entries: {e}")
+
+    return True
+
+
 def download_and_extract_payload(target_url: str, offset: int, length: int, original_filename_url: str, output_dir_base: str) -> None:
     """Downloads a byte range, decompresses, checks conditions, and saves if criteria are met."""
     try:
@@ -277,11 +349,13 @@ def download_and_extract_payload(target_url: str, offset: int, length: int, orig
                         save_file(payload_bytes, parsed_original_url, record, output_dir_base)
 
             elif file_ext_original == ".rar":
-                payload_bytes += record.content_stream().read()
-                should_save = check_archive_contents(payload_bytes, file_ext_original)
+                should_save = process_rar_file_preview(payload_bytes)
                 if should_save:
-                    print("found RAR")
-                    save_file(payload_bytes, parsed_original_url, record, output_dir_base)
+                    payload_bytes += record.content_stream().read()
+                    should_save = check_archive_contents(payload_bytes, file_ext_original)
+                    if should_save:
+                        print("found RAR")
+                        save_file(payload_bytes, parsed_original_url, record, output_dir_base)
 
     except requests.exceptions.RequestException as e:
         print(f"Error downloading {target_url}: {e}")
