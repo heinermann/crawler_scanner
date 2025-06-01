@@ -132,6 +132,12 @@ def save_file(payload_bytes, parsed_original_url, record, output_dir_base):
     file_ext_original = os.path.splitext(original_filename_from_url)[1].lower()[1:]
     last_modified_date_str = record.rec_headers.get_header("WARC-Date")
 
+    # Convert old time format to iso string
+    if last_modified_date_str is None:
+        last_modified_date_str = record.rec_headers.get_header("archive-date")
+        dt = datetime.strptime(last_modified_date_str, "%Y%m%d%H%M%S")
+        last_modified_date_str = dt.isoformat()
+
     sanitized_final_filename = unquote(original_filename_from_url)
 
     final_save_path = os.path.join(output_dir_base, file_ext_original, parsed_original_url.netloc, sanitized_final_filename)
@@ -246,7 +252,7 @@ def download_and_extract_payload(target_url: str, offset: int, length: int, orig
             file_ext_original = os.path.splitext(original_filename_from_url)[1].lower()
 
             # Only need 8 bytes for the initial checks
-            payload_bytes = record.content_stream().read(length=512)
+            payload_bytes = record.content_stream().read(length=1024)
             time.sleep(0.1)
 
             should_save = is_desired_file_header(payload_bytes)
