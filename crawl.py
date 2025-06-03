@@ -103,8 +103,13 @@ def check_rar_archive(archive_stream) -> bool:
         print("RAR archive is multi-volume and needs first volume (NeedFirstVolume).")
     except rarfile.RarExecError as e:
         print(f"Unrar tool failed (RarExecError): {e}.")
+        if "Cannot find working tool" in str(e):
+            # Just return true because it could maybe contain a map
+            return True
     except Exception as e_archive:
         print(f"Unexpected error inspecting RAR archive: {e_archive}")
+        # Just in case
+        return True
     return False
 
 
@@ -128,6 +133,9 @@ def is_desired_file_header(payload_bytes) -> bool:
         return True
     elif payload_bytes.startswith(b"TYPE\x10\x00\x00\x00"):
         print("Found PUD/CHK")
+        return True
+    elif payload_bytes[80:].startswith(b"MPQ\x1a"):
+        print("Found SCM/SCX/MPQ with MAC header (rare)")
         return True
     return False
 
@@ -309,7 +317,6 @@ def download_and_extract_payload(target_url: str, offset: int, length: int, orig
 
         for record in ArchiveIterator(response.raw):
             if record.rec_type != 'response' and record.rec_type != 'resource':
-                time.sleep(0.2)
                 continue
 
             parsed_original_url = urlparse(original_filename_url)
@@ -325,7 +332,6 @@ def download_and_extract_payload(target_url: str, offset: int, length: int, orig
 
             # Only need 8 bytes for the initial checks
             payload_bytes = record.content_stream().read(length=1024)
-            time.sleep(0.1)
 
             should_save = is_desired_file_header(payload_bytes)
             if should_save:  # is a SCM/SCX/REP/PUD
