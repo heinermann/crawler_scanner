@@ -85,6 +85,8 @@ def check_zip_archive(archive_stream) -> bool:
             return is_archive_matching(archive_file)
     except zipfile.BadZipFile:
         print("Failed to inspect ZIP archive (BadZipFile).")
+        # Return true for partial archives
+        return True
     except Exception as e_archive:
         print(f"Unexpected error inspecting ZIP archive: {e_archive}")
     return False
@@ -186,7 +188,7 @@ def request_record(target_url: str, offset: int, length: int, original_filename_
     print(f"Processing: {original_filename_url}")
 
     retry_strategy = Retry(
-        backoff_factor=2,
+        backoff_factor=1,
         status_forcelist=[429, 500, 502, 503, 504]
     )
 
