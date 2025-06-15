@@ -78,18 +78,47 @@ def is_archive_matching(archive_file) -> bool:
     return False
 
 
+def check_broken_zip_archive(byte_stream) -> bool:
+    num_read = 0
+    try:
+        while True:
+            hdr = zip_header.parse_stream(byte_stream)
+            num_read += 1
+
+            # assuming a directory, go to the next entry
+            if hdr.compressed_size == 0:
+                continue
+
+            extension = str(os.path.splitext(hdr.filename)[1], encoding="utf-8").lower()
+
+            # Possibly a map
+            if extension in TARGET_EXTENSIONS:
+                print(f"Has target extension: {extension}")
+                return True
+
+    except ConstError:
+        print("Zip header doesn't match, skipping")
+    except ConstructError as e:
+        print(f"Zip parsing threw error after reading {num_read} entries: {type(e).__name__} {e}")
+    except Exception as e:
+        print(f"Unhandled exception in process_zip_file after reading {num_read} entries: {e}")
+
+    return False
+
+
 def check_zip_archive(archive_stream) -> bool:
     """Checks a zip archive for contained files"""
-    try:
-        with zipfile.ZipFile(archive_stream, 'r') as archive_file:
-            return is_archive_matching(archive_file)
-    except zipfile.BadZipFile:
-        print("Failed to inspect ZIP archive (BadZipFile).")
-        # Return true for partial archives
-        return True
-    except Exception as e_archive:
-        print(f"Unexpected error inspecting ZIP archive: {e_archive}")
-    return False
+    return check_broken_zip_archive(archive_stream)
+    # try:
+    #     with zipfile.ZipFile(archive_stream, 'r') as archive_file:
+    #         return is_archive_matching(archive_file)
+    # except zipfile.BadZipFile:
+    #     print("Failed to inspect ZIP archive (BadZipFile).")
+    #     # Return true for partial archives
+    #     return True
+    # except Exception as e_archive:
+    #     print(f"Unexpected error inspecting ZIP archive: {e_archive}")
+    # return False
 
 
 def check_rar_archive(archive_stream) -> bool:
