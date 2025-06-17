@@ -68,6 +68,7 @@ def bytes_progress_bar(total: int, desc: str, position: int) -> tqdm:
 
 def http_get_streamed(url: str) -> requests.Response:
     retry_strategy = Retry(
+        total=None,
         backoff_factor=2,
         status_forcelist=[429, 500, 502, 503, 504]
     )

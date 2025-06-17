@@ -217,6 +217,7 @@ def request_record(target_url: str, offset: int, length: int, original_filename_
     print(f"Processing: {original_filename_url}")
 
     retry_strategy = Retry(
+        total=None,
         backoff_factor=1,
         status_forcelist=[429, 500, 502, 503, 504]
     )

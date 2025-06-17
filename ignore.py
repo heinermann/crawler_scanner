@@ -109,6 +109,8 @@ BANNED_PATHS = [
     "tvshows",
     "vod",
     "wireless",
+    "photoshop",
+    "illustrator"
 ]
 
 BANNED_TOKENS = [
