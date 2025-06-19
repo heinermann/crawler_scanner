@@ -339,13 +339,8 @@ def download_and_extract_payload(target_url: str, offset: int, length: int, orig
             if response.status_code == 206:
                 break
 
-            # rate limited
-            if response.status_code == 503:
-                time.sleep(0.4)
-                continue
-
             print(f"Unexpected status code: {response.status_code}")
-            time.sleep(0.5)
+            time.sleep(0.2)
 
         for record in ArchiveIterator(response.raw):
             if record.rec_type != 'response' and record.rec_type != 'resource':
@@ -399,8 +394,6 @@ def download_and_extract_payload(target_url: str, offset: int, length: int, orig
         print(f"Error downloading {target_url}: {e}")
     except gzip.BadGzipFile:
         print(f"Error: Downloaded content for {target_url} is not a valid GZip file. Offset/Length might be incorrect or data corrupted.")
-    finally:
-        time.sleep(0.2)
 
 
 def process_input_file(filepath: str, output_dir: str, resume_url: str) -> None:
