@@ -76,6 +76,7 @@ BANNED_PATHS_WITH_S = [
     "video",
     "wedding_font",
     "wp-theme",
+    "dataset",
 ]
 
 BANNED_PATHS = [
@@ -110,7 +111,9 @@ BANNED_PATHS = [
     "vod",
     "wireless",
     "photoshop",
-    "illustrator"
+    "illustrator",
+    "redirect",
+    "dictionaries",
 ]
 
 BANNED_TOKENS = [
@@ -159,6 +162,7 @@ BANNED_REGEXES = [re.compile(s, re.IGNORECASE) for s in [
     f".*/({'|'.join(BANNED_PATHS_WITH_S)})s?/.*",
     f".*/({'|'.join(BANNED_PATHS)})/.*",
     r".*(1024|1152|1280|1600|1920|800)x(1024|1200|1440|600|768|864|960).*",
+    r".*/(safelink|redirect)\.php\?.*",
 ]]
 
 BANNED_DOMAIN_REGEXES = [re.compile(s, re.IGNORECASE) for s in [

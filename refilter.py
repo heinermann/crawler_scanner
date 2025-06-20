@@ -17,7 +17,8 @@ def should_ignore(line: str) -> bool:
 
 def reapply(filename):
     backupname = filename + ".bak"
-    os.remove(backupname)
+    if os.path.isfile(backupname):
+        os.remove(backupname)
     os.rename(filename, backupname)
 
     with open(backupname, "r", encoding="utf-8") as f, open(filename, "w", encoding="utf-8") as out:
