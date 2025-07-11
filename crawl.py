@@ -218,8 +218,8 @@ def request_record(target_url: str, offset: int, length: int, original_filename_
 
     retry_strategy = Retry(
         total=None,
-        backoff_factor=1,
-        status_forcelist=[429, 500, 502, 503, 504]
+        backoff_factor=0.2,
+        status_forcelist=[403, 429, 500, 502, 503, 504]
     )
 
     adapter = HTTPAdapter(max_retries=retry_strategy)
@@ -392,8 +392,10 @@ def download_and_extract_payload(target_url: str, offset: int, length: int, orig
 
     except requests.exceptions.RequestException as e:
         print(f"Error downloading {target_url}: {e}")
+        raise
     except gzip.BadGzipFile:
         print(f"Error: Downloaded content for {target_url} is not a valid GZip file. Offset/Length might be incorrect or data corrupted.")
+        raise
 
 
 def process_input_file(filepath: str, output_dir: str, resume_url: str) -> None:
@@ -423,6 +425,7 @@ def process_input_file(filepath: str, output_dir: str, resume_url: str) -> None:
 
             download_url: str = COMMON_CRAWL_S3_BASE_URL + s3_path
             download_and_extract_payload(download_url, offset, length, original_url_for_naming, output_dir)
+            time.sleep(0.1)
 
 
 if __name__ == "__main__":
